@@ -1,2 +1,0 @@
-# QuizBotByJaatCoderX
-Quiz bot 
