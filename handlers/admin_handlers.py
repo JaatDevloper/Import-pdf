@@ -1444,7 +1444,7 @@ def handle_pdf_callback(update, context):
             del context.user_data['pdf_questions']
         query.edit_message_text("PDF import cancelled.")
 
-        def diagnose_pdf(update, context):
+def diagnose_pdf(update, context):
     """
     Diagnostic function to identify Hindi text encoding issues in PDFs
     """
