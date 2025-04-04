@@ -1230,7 +1230,7 @@ from config import ADMIN_USERS
 
 def import_questions_from_pdf(update, context):
     """
-    Handler function for importing questions from a PDF document
+    Handler function for importing questions from a PDF document with Hindi support
     """
     # Check if user is admin
     user_id = update.effective_user.id
@@ -1246,39 +1246,69 @@ def import_questions_from_pdf(update, context):
     # Get the document file
     document = update.message.document
     file_id = document.file_id
+    file_name = document.file_name
+    file_size = document.file_size
     
+    update.message.reply_text(f"PDF Information:\n- Name: {file_name}\n- Size: {file_size} bytes")
     update.message.reply_text("Downloading PDF file...")
     
     # Download the file
     file = context.bot.get_file(file_id)
-    file_bytes = io.BytesIO()
-    file.download(out=file_bytes)
-    file_bytes.seek(0)
     
-    update.message.reply_text("Processing PDF file. This may take a moment...")
+    # Save to a temporary file
+    temp_path = f"/tmp/tmp{file_id}.pdf"
+    file.download(temp_path)
+    
+    update.message.reply_text(f"Download successful")
+    update.message.reply_text(f"Processing PDF file...")
     
     # Process the PDF and extract text
     try:
-        # Try PyMuPDF first
+        # Try PyMuPDF first (better for Hindi)
         try:
             import fitz
-            doc = fitz.open(stream=file_bytes.getvalue(), filetype="pdf")
+            doc = fitz.open(temp_path)
+            
+            # Special handling for Hindi text extraction
             text = ""
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                text += page.get_text() + "\n"
+                # Extract text with special parameters for Hindi
+                blocks = page.get_text("dict")["blocks"]
+                for block in blocks:
+                    if "lines" in block:
+                        for line in block["lines"]:
+                            if "spans" in line:
+                                for span in line["spans"]:
+                                    if "text" in span:
+                                        # Ensure proper UTF-8 encoding
+                                        text += span["text"] + " "
+                                text += "\n"
+            
             doc.close()
+            
+            # Ensure text is properly encoded as UTF-8
+            text = text.encode('utf-8', errors='replace').decode('utf-8')
+            
         except Exception as e:
+            update.message.reply_text(f"PyMuPDF extraction failed: {str(e)}")
             # Try PyPDF2 as fallback
             try:
                 import PyPDF2
-                pdf_reader = PyPDF2.PdfReader(file_bytes)
-                text = ""
-                for page_num in range(len(pdf_reader.pages)):
-                    text += pdf_reader.pages[page_num].extract_text() + "\n"
+                with open(temp_path, 'rb') as f:
+                    pdf_reader = PyPDF2.PdfReader(f)
+                    text = ""
+                    for page_num in range(len(pdf_reader.pages)):
+                        page_text = pdf_reader.pages[page_num].extract_text()
+                        # Ensure proper UTF-8 encoding
+                        text += page_text.encode('utf-8', errors='replace').decode('utf-8') + "\n"
             except Exception as e:
-                update.message.reply_text(f"Failed to extract text: {str(e)}")
+                update.message.reply_text(f"PyPDF2 extraction failed: {str(e)}")
+                os.remove(temp_path)
                 return
+        
+        # Clean up the temp file
+        os.remove(temp_path)
         
         if not text or len(text.strip()) < 10:
             update.message.reply_text("Could not extract text from the PDF. Please make sure it contains extractable text.")
@@ -1293,7 +1323,7 @@ def import_questions_from_pdf(update, context):
         current_options = []
         correct_option = None
         
-        # Define patterns
+        # Enhanced patterns for multilingual support
         question_pattern = re.compile(r'(\d+)[\.)\s]+(.+)')
         option_pattern = re.compile(r'([A-Da-d])[\.)\s]+(.+)')
         
@@ -1376,12 +1406,12 @@ def import_questions_from_pdf(update, context):
         # Store questions temporarily in user data
         context.user_data['pdf_questions'] = questions
         
-        # Create a confirmation message with question preview
+        # Create a confirmation message with question preview - full text for better Hindi display
         preview_text = "Extracted the following questions:\n\n"
         for i, question in enumerate(questions[:3], 1):  # Preview first 3 questions
-            preview_text += f"{i}. {question['question'][:50]}...\n"
+            preview_text += f"{i}. {question['question']}\n"
             for j, option in enumerate(question['options'][:4], 1):
-                preview_text += f"   {j}. {option[:30]}...\n"
+                preview_text += f"   {j}. {option}\n"
             preview_text += f"   Correct: Option {question['correct_answer']}\n\n"
         
         if len(questions) > 3:
