@@ -7,7 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     fonts-noto-cjk \
     fonts-noto \
+    fonts-freefont-ttf \
     fonts-indic \
+    fonts-lohit-deva \
+    fonts-nakula \
+    fonts-gargi \
+    fonts-sarai \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
