@@ -11,11 +11,11 @@ from telegram import ParseMode
 
 # Import handlers
 from handlers.admin_handlers import (
-    start_command, list_quizzes, create_quiz, import_questions_from_pdf,
+    # Keep your original imports here - don't change these
+    start, list_quizzes, create_quiz, import_questions_from_pdf,
     handle_quiz_details, handle_quiz_question, handle_quiz_options,
     handle_quiz_correct, handle_quiz_continue, handle_quiz_create_confirm,
-    handle_quiz_cancel, handle_pdf_callback, delete_quiz,
-    diagnose_pdf, handle_diagnostic_pdf  # Added diagnostic handlers
+    handle_quiz_cancel, handle_pdf_callback, delete_quiz
 )
 from handlers.quiz_handlers import (
     take_quiz, handle_quiz_choice, handle_quiz_answer,
@@ -29,9 +29,10 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Add the diagnostic functions to admin_handlers.py first, then import them here
 def setup_handlers(dispatcher):
     # Admin handlers
-    dispatcher.add_handler(CommandHandler("start", start_command))
+    dispatcher.add_handler(CommandHandler("start", start))  # Changed to match your existing function name
     dispatcher.add_handler(CommandHandler("list", list_quizzes))
     dispatcher.add_handler(CommandHandler("create", create_quiz))
     dispatcher.add_handler(CommandHandler("import", import_questions_from_pdf))
@@ -65,9 +66,8 @@ def setup_handlers(dispatcher):
     )
     dispatcher.add_handler(create_quiz_handler)
     
-    # Add diagnostic handlers
-    dispatcher.add_handler(CommandHandler("diagnose_pdf", diagnose_pdf))
-    dispatcher.add_handler(MessageHandler(Filters.document & Filters.mime_type("application/pdf") & ~Filters.command, handle_diagnostic_pdf))
+    # We'll add the diagnostic handlers after you've added the functions to admin_handlers.py
+    # This is to avoid any import errors
 
 def run_healthcheck():
     app = Flask(__name__)
