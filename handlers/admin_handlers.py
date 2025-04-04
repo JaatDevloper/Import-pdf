@@ -1235,7 +1235,7 @@ from config import ADMIN_USERS
 
 def import_questions_from_pdf(update, context):
     """
-    Handler function for importing questions from a PDF document with Hindi support using FPDF2
+    Handler function for importing questions from a PDF document using pdfplumber for better Hindi support
     """
     # Check if user is admin
     user_id = update.effective_user.id
@@ -1256,144 +1256,78 @@ def import_questions_from_pdf(update, context):
     
     # Download the file
     file = context.bot.get_file(file_id)
-    # Save to a temporary file
     temp_path = f"/tmp/tmp{file_id}.pdf"
     file.download(temp_path)
     
-    update.message.reply_text("Processing PDF file. Trying multiple extraction methods...")
+    update.message.reply_text("Processing PDF file with pdfplumber...")
     
-    # Process the PDF and extract text
     try:
-        # First try PyMuPDF
-        try:
-            import fitz
-            update.message.reply_text("Attempting extraction with PyMuPDF...")
-            
-            doc = fitz.open(temp_path)
-            text = ""
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                # Get raw text with minimal processing
-                text += page.get_text("text") + "\n"
-            doc.close()
-            
-            # If we got text, proceed
-            if text and len(text.strip()) > 10:
-                update.message.reply_text("Successfully extracted text with PyMuPDF.")
-            else:
-                update.message.reply_text("PyMuPDF extraction did not yield valid text. Trying PyPDF2...")
-                raise Exception("Empty text from PyMuPDF")
+        # Use pdfplumber to extract text with structure preservation
+        import pdfplumber
         
-        except Exception as e:
-            # Try PyPDF2 next
-            try:
-                import PyPDF2
-                update.message.reply_text("Attempting extraction with PyPDF2...")
-                
-                with open(temp_path, 'rb') as f:
-                    pdf_reader = PyPDF2.PdfReader(f)
-                    text = ""
-                    for page_num in range(len(pdf_reader.pages)):
-                        text += pdf_reader.pages[page_num].extract_text() + "\n"
-                
-                # If we got text, proceed
-                if text and len(text.strip()) > 10:
-                    update.message.reply_text("Successfully extracted text with PyPDF2.")
-                else:
-                    update.message.reply_text("PyPDF2 extraction did not yield valid text. Trying FPDF...")
-                    raise Exception("Empty text from PyPDF2")
-            
-            except Exception as e:
-                # Finally, try an indirect approach with FPDF2 for Hindi (doesn't extract text, but produces a readable format)
-                try:
-                    from fpdf import FPDF
-                    update.message.reply_text("Attempting conversion with FPDF2...")
-                    
-                    # This is an indirect method - we're just checking if FPDF is available
-                    # For actual extraction, we'll rely on PyMuPDF or PyPDF2
-                    # But we'll format the output differently for Hindi compatibility
-                    
-                    # Go back to PyMuPDF with specialized Hindi processing
-                    import fitz
-                    doc = fitz.open(temp_path)
-                    
-                    # Special Hindi extraction approach
-                    text = ""
-                    for page_num in range(len(doc)):
-                        page = doc.load_page(page_num)
-                        # Get blocks for better structure preservation
-                        blocks = page.get_text("dict")["blocks"]
-                        for block in blocks:
-                            if "lines" in block:
-                                for line in block["lines"]:
-                                    if "spans" in line:
-                                        line_text = ""
-                                        for span in line["spans"]:
-                                            if "text" in span:
-                                                line_text += span["text"]
-                                        text += line_text + "\n"
-                    
-                    doc.close()
-                    update.message.reply_text("Using specialized Hindi text processing.")
-                
-                except Exception as e:
-                    update.message.reply_text(f"All extraction methods failed: {str(e)}")
-                    os.remove(temp_path)
-                    return
+        with pdfplumber.open(temp_path) as pdf:
+            text = ""
+            for page in pdf.pages:
+                # Get text with layout preservation
+                page_text = page.extract_text(x_tolerance=3, y_tolerance=3)
+                if page_text:
+                    text += page_text + "\n\n"
         
         # Clean up the temp file
         os.remove(temp_path)
         
         if not text or len(text.strip()) < 10:
+            update.message.reply_text("Could not extract text with pdfplumber. Trying PyMuPDF as fallback...")
+            
+            # Fallback to PyMuPDF for Hindi
+            try:
+                import fitz
+                doc = fitz.open(temp_path)
+                text = ""
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    # Get raw text
+                    text += page.get_text("text") + "\n"
+                doc.close()
+                os.remove(temp_path)
+            except Exception as e:
+                update.message.reply_text(f"Fallback extraction failed: {str(e)}")
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                return
+        
+        # Check again if we have valid text
+        if not text or len(text.strip()) < 10:
             update.message.reply_text("Could not extract text from the PDF. Please make sure it contains extractable text.")
             return
         
-        # Parse questions from the extracted text
+        # Parse questions from the extracted text with improved handling for Hindi
         questions = []
         lines = text.split('\n')
         
-        # Preprocess: join broken Hindi lines
+        # Clean empty lines and combine question lines
         processed_lines = []
-        current_line = ""
-        
         for line in lines:
-            line = line.strip()
-            if not line:
-                if current_line:
-                    processed_lines.append(current_line)
-                    current_line = ""
-                continue
-                
-            # If line starts with a number or letter followed by dot/bracket, it's likely a new question/option
-            if re.match(r'^(\d+|[A-Da-d])[\.\)\s]', line):
-                if current_line:
-                    processed_lines.append(current_line)
-                current_line = line
-            else:
-                # This might be continuation of previous line (especially for Hindi text)
-                current_line += " " + line
+            if line.strip():
+                processed_lines.append(line.strip())
         
-        # Add the last line
-        if current_line:
-            processed_lines.append(current_line)
-        
-        # Now parse with improved line handling
+        # Initialize variables for question parsing
         current_question = None
         current_options = []
         correct_option = None
+        question_index = 0
         
-        # Define patterns for question detection
-        question_pattern = re.compile(r'(\d+)[\.)\s]+(.+)')
-        option_pattern = re.compile(r'([A-Da-d])[\.)\s]+(.+)')
+        # Define more flexible patterns for question detection
+        question_pattern = re.compile(r'^\s*(\d+)[\.)\s]+(.+)')
+        option_pattern = re.compile(r'^\s*([A-Da-d]|\d)[\.)\s]+(.+)')
         
-        for line in processed_lines:
-            line = line.strip()
-            if not line:
-                continue
+        i = 0
+        while i < len(processed_lines):
+            line = processed_lines[i]
             
-            # Check for question pattern
-            question_match = question_pattern.search(line)
-            if question_match and len(question_match.group(2)) > 5:
+            # Check for question pattern (starts with a number)
+            question_match = question_pattern.match(line)
+            if question_match:
                 # If we already have a question, save it
                 if current_question and current_options:
                     # Determine correct answer (default to first option)
@@ -1418,13 +1352,31 @@ def import_questions_from_pdf(update, context):
                     })
                 
                 # Start a new question
+                question_index = int(question_match.group(1))
                 current_question = question_match.group(2)
                 current_options = []
                 correct_option = None
+                
+                # Check if options are included in the same line as question (common in Hindi PDFs)
+                # Look for patterns like (a) ... (b) ... (c) ... (d) ...
+                option_in_question = re.findall(r'\([a-dA-D]\)\s*([^(]+)(?=\([a-dA-D]\)|\Z)', current_question)
+                
+                if len(option_in_question) >= 2:  # Found options in the question line
+                    # Extract options
+                    all_content = current_question
+                    current_question = re.sub(r'\([a-dA-D]\).*', '', current_question).strip()
+                    
+                    # Extract options with their labels
+                    option_matches = re.findall(r'\(([a-dA-D])\)\s*([^(]+)(?=\([a-dA-D]\)|\Z)', all_content)
+                    for label, option_text in option_matches:
+                        current_options.append(option_text.strip())
+                        # If this option has an indicator of being correct
+                        if "✓" in option_text or "✔" in option_text or "√" in option_text or "correct" in option_text.lower():
+                            correct_option = label
             
-            # Check for option pattern
-            option_match = option_pattern.search(line)
-            if option_match and current_question:
+            # Check for option pattern if not already extracted from question line
+            elif len(current_options) < 4 and current_question and option_pattern.match(line):
+                option_match = option_pattern.match(line)
                 option_letter = option_match.group(1).upper()
                 option_text = option_match.group(2)
                 
@@ -1434,6 +1386,9 @@ def import_questions_from_pdf(update, context):
                 # Check if this option is marked as correct
                 if "✓" in line or "✔" in line or "√" in line or "correct" in line.lower():
                     correct_option = option_letter
+            
+            # Move to next line
+            i += 1
         
         # Add the last question
         if current_question and current_options:
@@ -1465,11 +1420,11 @@ def import_questions_from_pdf(update, context):
         # Store questions temporarily in user data
         context.user_data['pdf_questions'] = questions
         
-        # Create a confirmation message with question preview - show full text
+        # Create a confirmation message with question preview
         preview_text = "Extracted the following questions:\n\n"
         for i, question in enumerate(questions[:3], 1):  # Preview first 3 questions
             preview_text += f"{i}. {question['question']}\n"
-            for j, option in enumerate(question['options'][:4], 1):
+            for j, option in enumerate(question['options'], 1):
                 preview_text += f"   {j}. {option}\n"
             preview_text += f"   Correct: Option {question['correct_answer']}\n\n"
         
