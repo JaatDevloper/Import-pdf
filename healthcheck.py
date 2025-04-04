@@ -1,217 +1,115 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-"""
-Standalone script for Telegram Quiz Bot deployment on Koyeb
-This file combines both polling mode and a health check server
-"""
-
 import os
-import sys
 import logging
-import threading
-from flask import Flask, jsonify
-
-from telegram import Update
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
-from telegram.ext import ConversationHandler, Dispatcher
+from threading import Thread
+from flask import Flask
+from telegram.ext import (
+    Updater, CommandHandler, MessageHandler, 
+    Filters, CallbackQueryHandler, ConversationHandler,
+    PicklePersistence
+)
+from telegram import ParseMode
 
 # Import handlers
-from handlers.quiz_handlers import (
-    start, help_command, quiz_callback, answer_callback, 
-    time_up_callback, list_quizzes, take_quiz, import_quiz,
-    get_results, cancel_quiz
-)
 from handlers.admin_handlers import (
-    create_quiz, add_question, set_quiz_time, set_negative_marking, 
-    finalize_quiz, admin_help, admin_command, edit_quiz_time, edit_question_time,
-    convert_poll_to_quiz, start_marathon, finalize_marathon, cancel_marathon,
-    set_question_correct_answer, import_questions_from_pdf, handle_pdf_callback  # Added PDF handlers
+    start_command, list_quizzes, create_quiz, import_questions_from_pdf,
+    handle_quiz_details, handle_quiz_question, handle_quiz_options,
+    handle_quiz_correct, handle_quiz_continue, handle_quiz_create_confirm,
+    handle_quiz_cancel, handle_pdf_callback, delete_quiz,
+    diagnose_pdf, handle_diagnostic_pdf  # Added diagnostic handlers
+)
+from handlers.quiz_handlers import (
+    take_quiz, handle_quiz_choice, handle_quiz_answer,
+    finish_quiz, handle_finish_callback
 )
 
-# Import config settings
-from config import (
-    TELEGRAM_BOT_TOKEN, API_ID, API_HASH, OWNER_ID,
-    WEBHOOK_URL, PORT, ADMIN_USERS
-)
+from config import TELEGRAM_TOKEN, PORT
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("bot.log")
-    ]
-)
-
+# Setup logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Flask app for health checks
-app = Flask(__name__)
-
-def error_handler(update, context):
-    """Handle errors in the dispatcher"""
-    logger.error(f"Error occurred: {context.error}")
-    
-    # Get the user who encountered the error
-    user_id = update.effective_user.id if update and update.effective_user else "Unknown"
-    
-    # Log detailed error information
-    logger.error(f"Update {update} caused error {context.error} for user {user_id}")
-    
-    # Notify user about the error
-    if update and update.effective_message:
-        update.effective_message.reply_text(
-            "Sorry, an error occurred while processing your request. Please try again later."
-        )
-
 def setup_handlers(dispatcher):
-    """Set up all handlers for the bot"""
-    
-    # First register the poll handler - THIS IS THE KEY CHANGE
-    dispatcher.add_handler(MessageHandler(Filters.poll | Filters.forwarded, convert_poll_to_quiz))
-    
-    # Add PDF document handler
-    dispatcher.add_handler(MessageHandler(Filters.document.mime_type("application/pdf"), import_questions_from_pdf))
-    
-    # Basic command handlers
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("help", help_command))
+    # Admin handlers
+    dispatcher.add_handler(CommandHandler("start", start_command))
     dispatcher.add_handler(CommandHandler("list", list_quizzes))
-    dispatcher.add_handler(CommandHandler("results", get_results))
-    dispatcher.add_handler(CommandHandler("admin", admin_command))
-    dispatcher.add_handler(CommandHandler("adminhelp", admin_help))
+    dispatcher.add_handler(CommandHandler("create", create_quiz))
+    dispatcher.add_handler(CommandHandler("import", import_questions_from_pdf))
+    dispatcher.add_handler(CommandHandler("delete", delete_quiz))
     
-    # Marathon quiz commands
-    dispatcher.add_handler(CommandHandler("start_marathon", start_marathon))
-    dispatcher.add_handler(CommandHandler("finalize_marathon", finalize_marathon))
-    dispatcher.add_handler(CommandHandler("cancel_marathon", cancel_marathon))
-    dispatcher.add_handler(CommandHandler("correct", set_question_correct_answer))
+    # Quiz handlers
+    dispatcher.add_handler(CommandHandler("take", take_quiz))
     
-    # Quiz taking conversation handler
-    quiz_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("take", take_quiz)],
+    # Callback handlers
+    dispatcher.add_handler(CallbackQueryHandler(handle_quiz_choice, pattern="^quiz_"))
+    dispatcher.add_handler(CallbackQueryHandler(handle_quiz_answer, pattern="^answer_"))
+    dispatcher.add_handler(CallbackQueryHandler(handle_finish_callback, pattern="^finish_"))
+    dispatcher.add_handler(CallbackQueryHandler(handle_pdf_callback, pattern="^pdf_"))
+    
+    # Conversation handlers
+    create_quiz_handler = ConversationHandler(
+        entry_points=[],
         states={
-            "ANSWERING": [
-                CallbackQueryHandler(answer_callback, pattern=r"^answer_"),
-                CommandHandler("cancel", cancel_quiz)
-            ],
+            1: [MessageHandler(Filters.text & ~Filters.command, handle_quiz_details)],
+            2: [MessageHandler(Filters.text & ~Filters.command, handle_quiz_question)],
+            3: [MessageHandler(Filters.text & ~Filters.command, handle_quiz_options)],
+            4: [MessageHandler(Filters.text & ~Filters.command, handle_quiz_correct)],
+            5: [MessageHandler(Filters.text & ~Filters.command, handle_quiz_continue)]
         },
-        fallbacks=[CommandHandler("cancel", cancel_quiz)]
+        fallbacks=[
+            CommandHandler("cancel", handle_quiz_cancel),
+            CommandHandler("done", handle_quiz_create_confirm)
+        ],
+        name="create_quiz",
+        persistent=True
     )
-    dispatcher.add_handler(quiz_conv_handler)
+    dispatcher.add_handler(create_quiz_handler)
     
-    # Quiz creation conversation handler
-    create_quiz_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("create", create_quiz)],
-        states={
-            "ADDING_QUESTION": [
-                MessageHandler(Filters.text & ~Filters.command, add_question),
-                CommandHandler("done", finalize_quiz),
-                CommandHandler("cancel", cancel_quiz)
-            ],
-            "SETTING_TIME": [
-                MessageHandler(Filters.text & ~Filters.command, set_quiz_time),
-                CommandHandler("cancel", cancel_quiz)
-            ],
-            "SETTING_NEGATIVE_MARKING": [
-                MessageHandler(Filters.text & ~Filters.command, set_negative_marking),
-                CommandHandler("cancel", cancel_quiz)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_quiz)]
-    )
-    dispatcher.add_handler(create_quiz_conv_handler)
-    
-    # Quiz import handler
-    import_quiz_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("import", import_quiz)],
-        states={
-            "IMPORTING": [
-                MessageHandler(Filters.document, import_quiz),
-                CommandHandler("cancel", cancel_quiz)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_quiz)]
-    )
-    dispatcher.add_handler(import_quiz_conv_handler)
+    # Add diagnostic handlers
+    dispatcher.add_handler(CommandHandler("diagnose_pdf", diagnose_pdf))
+    dispatcher.add_handler(MessageHandler(Filters.document & Filters.mime_type("application/pdf") & ~Filters.command, handle_diagnostic_pdf))
 
-    # Edit quiz time handler
-    edit_time_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("edittime", edit_quiz_time)],
-        states={
-            "EDITING_TIME": [
-                MessageHandler(Filters.text & ~Filters.command, set_quiz_time),
-                CommandHandler("cancel", cancel_quiz)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_quiz)]
+def run_healthcheck():
+    app = Flask(__name__)
+
+    @app.route('/')
+    def health():
+        return "Bot is running!"
+
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+
+def main():
+    logger.info("Starting bot...")
+    
+    # Create persistence object
+    persistence = PicklePersistence(filename='quiz_bot_data')
+    
+    # Create the Updater and pass it your bot's token
+    updater = Updater(TELEGRAM_TOKEN, persistence=persistence)
+    
+    # Get the dispatcher to register handlers
+    dp = updater.dispatcher
+    
+    # Set up handlers
+    setup_handlers(dp)
+    
+    # Start the webhook
+    updater.start_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080)),
+        url_path=TELEGRAM_TOKEN,
+        webhook_url=f"https://quizmaster-bot.koyeb.app/{TELEGRAM_TOKEN}"
     )
-    dispatcher.add_handler(edit_time_conv_handler)
     
-    # Edit question time handler (direct command, no conversation)
-    dispatcher.add_handler(CommandHandler("editquestiontime", edit_question_time))
+    logger.info("Bot started")
     
-    # Other callback handlers
-    dispatcher.add_handler(CallbackQueryHandler(quiz_callback, pattern=r"^quiz_"))
-    dispatcher.add_handler(CallbackQueryHandler(time_up_callback, pattern=r"^time_up_"))
-    
-    # PDF callback handler
-    dispatcher.add_handler(CallbackQueryHandler(handle_pdf_callback, pattern=r"^pdf_"))
-    
-    # Register error handler
-    dispatcher.add_error_handler(error_handler)
-
-# Global variable for the updater
-updater = None
-
-def start_bot():
-    """Start the bot in polling mode"""
-    global updater
-    
-    # Check if token is available
-    token = os.getenv("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN)
-    if not token:
-        logger.error("Telegram Bot Token not found. Please set the TELEGRAM_BOT_TOKEN environment variable.")
-        exit(1)
-    
-    # Create the Updater and dispatcher
-    updater = Updater(token=token, use_context=True)
-    dispatcher = updater.dispatcher
-    
-    # Set up all handlers
-    setup_handlers(dispatcher)
-    
-    # Start the Bot with clean updates
-    logger.info("Starting in polling mode with drop_pending_updates=True")
-    updater.start_polling(drop_pending_updates=True)
+    # Run the Flask health check server
+    health_thread = Thread(target=run_healthcheck)
+    health_thread.daemon = True
+    health_thread.start()
     
     # Run the bot until you press Ctrl-C
     updater.idle()
 
-# Define Flask routes for health checks
-@app.route('/')
-def index():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'active',
-        'message': 'Telegram Quiz Bot is running!'
-    })
-
-def run_flask():
-    """Run the Flask app for health checks"""
-    # Run the Flask app on the port required by Koyeb
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
 if __name__ == '__main__':
-    # Start the Flask app in a separate thread
-    logger.info(f"Starting health check server on port {PORT}")
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True  # This ensures the thread will exit when the main program exits
-    flask_thread.start()
-    
-    # Start the bot in polling mode
-    logger.info("Starting bot in polling mode")
-    start_bot()
+    main()
