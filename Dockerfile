@@ -2,28 +2,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install essential packages with comprehensive Devanagari font support
+# Install essential packages with Devanagari font support
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    # Devanagari fonts for Hindi
-    fonts-lohit-deva \
-    fonts-nakula \
-    fonts-gargi \
-    fonts-sarai \
-    fonts-samyak-deva \
-    fonts-navilu \
-    fonts-noto-cjk \
     fonts-noto \
-    fonts-indic \
-    # Build dependencies for pdfplumber
-    build-essential \
-    libpoppler-cpp-dev \
-    pkg-config \
-    python3-dev \
+    fonts-lohit-deva \
+    locales \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "en_US.UTF-8 UTF-8" > /etc/locale.gen \
+    && echo "hi_IN.UTF-8 UTF-8" >> /etc/locale.gen \
+    && locale-gen
 
-# Copy requirements.txt
+# Set environment variables for proper encoding
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+ENV PYTHONIOENCODING=utf-8
+
+# Copy requirements file
 COPY requirements.txt .
 
 # Install Python dependencies
