@@ -26,7 +26,7 @@ from handlers.admin_handlers import (
     create_quiz, add_question, set_quiz_time, set_negative_marking, 
     finalize_quiz, admin_help, admin_command, edit_quiz_time, edit_question_time,
     convert_poll_to_quiz, start_marathon, finalize_marathon, cancel_marathon,
-    set_question_correct_answer
+    set_question_correct_answer, import_questions_from_pdf, handle_pdf_callback  # Added PDF handlers
 )
 
 # Import config settings
@@ -71,6 +71,9 @@ def setup_handlers(dispatcher):
     
     # First register the poll handler - THIS IS THE KEY CHANGE
     dispatcher.add_handler(MessageHandler(Filters.poll | Filters.forwarded, convert_poll_to_quiz))
+    
+    # Add PDF document handler
+    dispatcher.add_handler(MessageHandler(Filters.document.mime_type("application/pdf"), import_questions_from_pdf))
     
     # Basic command handlers
     dispatcher.add_handler(CommandHandler("start", start))
@@ -153,6 +156,9 @@ def setup_handlers(dispatcher):
     # Other callback handlers
     dispatcher.add_handler(CallbackQueryHandler(quiz_callback, pattern=r"^quiz_"))
     dispatcher.add_handler(CallbackQueryHandler(time_up_callback, pattern=r"^time_up_"))
+    
+    # PDF callback handler
+    dispatcher.add_handler(CallbackQueryHandler(handle_pdf_callback, pattern=r"^pdf_"))
     
     # Register error handler
     dispatcher.add_error_handler(error_handler)
