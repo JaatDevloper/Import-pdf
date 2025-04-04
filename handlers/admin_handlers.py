@@ -1443,6 +1443,211 @@ def handle_pdf_callback(update, context):
         if 'pdf_questions' in context.user_data:
             del context.user_data['pdf_questions']
         query.edit_message_text("PDF import cancelled.")
+
+def diagnose_pdf(update, context):
+    """
+    Diagnostic function to identify Hindi text encoding issues in PDFs
+    """
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_USERS:
+        update.message.reply_text("Sorry, only admins can use this diagnostic tool.")
+        return
+    
+    update.message.reply_text("PDF Hindi diagnostic tool. Please forward a PDF with Hindi text.")
+    context.user_data['awaiting_diagnostic_pdf'] = True
+
+def handle_diagnostic_pdf(update, context):
+    """
+    Process PDF for diagnosing Hindi text issues
+    """
+    if not context.user_data.get('awaiting_diagnostic_pdf', False):
+        return
+    
+    # Reset the flag
+    context.user_data['awaiting_diagnostic_pdf'] = False
+    
+    # Check if a document was provided
+    if not update.message.document or update.message.document.mime_type != 'application/pdf':
+        update.message.reply_text("Please forward a PDF file.")
+        return
+    
+    # Get the document file
+    document = update.message.document
+    file_id = document.file_id
+    
+    update.message.reply_text("Downloading PDF for diagnosis...")
+    
+    # Download the file
+    file = context.bot.get_file(file_id)
+    temp_path = f"/tmp/diag_{file_id}.pdf"
+    file.download(temp_path)
+    
+    update.message.reply_text("Running diagnostics on the PDF...")
+    
+    try:
+        import os
+        import sys
+        import locale
+        import io
+        
+        # Environment diagnostics
+        update.message.reply_text(f"Python version: {sys.version}")
+        update.message.reply_text(f"Default encoding: {sys.getdefaultencoding()}")
+        update.message.reply_text(f"Filesystem encoding: {sys.getfilesystemencoding()}")
+        update.message.reply_text(f"Locale: {locale.getlocale()}")
+        update.message.reply_text(f"Environment LANG: {os.environ.get('LANG', 'Not set')}")
+        update.message.reply_text(f"Environment LC_ALL: {os.environ.get('LC_ALL', 'Not set')}")
+        
+        # Check PDF metadata
+        update.message.reply_text("Checking PDF metadata...")
+        
+        # Try PyMuPDF
+        try:
+            import fitz
+            update.message.reply_text("Using PyMuPDF for diagnosis...")
+            
+            doc = fitz.open(temp_path)
+            update.message.reply_text(f"PDF version: {doc.pdf_version}")
+            update.message.reply_text(f"Page count: {len(doc)}")
+            
+            # Check metadata
+            metadata = doc.metadata
+            update.message.reply_text(f"Title: {metadata.get('title', 'None')}")
+            update.message.reply_text(f"Author: {metadata.get('author', 'None')}")
+            update.message.reply_text(f"Creator: {metadata.get('creator', 'None')}")
+            update.message.reply_text(f"Producer: {metadata.get('producer', 'None')}")
+            
+            # Check document fonts
+            fonts = set()
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                page_fonts = page.get_fonts()
+                for font in page_fonts:
+                    fonts.add(font[3])  # Font name
+            
+            update.message.reply_text(f"Fonts used in PDF: {', '.join(list(fonts)[:5])}...")
+            
+            # Test extraction at different levels
+            update.message.reply_text("Testing text extraction methods...")
+            
+            # Extract a sample from first page
+            page = doc.load_page(0)
+            
+            # Method 1: Simple text extraction
+            text1 = page.get_text("text")
+            hindi_sample1 = text1[:100]
+            update.message.reply_text(f"Simple extraction sample:\n{hindi_sample1}")
+            
+            # Method 2: Dict extraction (spans)
+            text2 = ""
+            blocks = page.get_text("dict")["blocks"]
+            for block in blocks[:2]:  # First two blocks
+                if "lines" in block:
+                    for line in block["lines"][:2]:  # First two lines
+                        if "spans" in line:
+                            for span in line["spans"]:
+                                if "text" in span:
+                                    text2 += span["text"] + " "
+                            text2 += "\n"
+            
+            hindi_sample2 = text2[:100]
+            update.message.reply_text(f"Span-based extraction sample:\n{hindi_sample2}")
+            
+            # Method 3: Raw extraction with encoding control
+            text3 = page.get_text("text").encode('utf-8', errors='replace').decode('utf-8')
+            hindi_sample3 = text3[:100]
+            update.message.reply_text(f"Encoding-controlled sample:\n{hindi_sample3}")
+            
+            doc.close()
+        
+        except Exception as e:
+            update.message.reply_text(f"PyMuPDF diagnostic failed: {str(e)}")
+        
+        # Try PyPDF2
+        try:
+            import PyPDF2
+            update.message.reply_text("Using PyPDF2 for diagnosis...")
+            
+            with open(temp_path, 'rb') as f:
+                pdf_reader = PyPDF2.PdfReader(f)
+                update.message.reply_text(f"Page count: {len(pdf_reader.pages)}")
+                
+                # Extract sample text
+                if len(pdf_reader.pages) > 0:
+                    text = pdf_reader.pages[0].extract_text()
+                    hindi_sample = text[:100]
+                    update.message.reply_text(f"PyPDF2 extraction sample:\n{hindi_sample}")
+        
+        except Exception as e:
+            update.message.reply_text(f"PyPDF2 diagnostic failed: {str(e)}")
+        
+        # Try pdfplumber if available
+        try:
+            import pdfplumber
+            update.message.reply_text("Using pdfplumber for diagnosis...")
+            
+            with pdfplumber.open(temp_path) as pdf:
+                update.message.reply_text(f"Page count: {len(pdf.pages)}")
+                
+                # Extract sample text
+                if len(pdf.pages) > 0:
+                    text = pdf.pages[0].extract_text()
+                    hindi_sample = text[:100]
+                    update.message.reply_text(f"pdfplumber extraction sample:\n{hindi_sample}")
+        
+        except Exception as e:
+            update.message.reply_text(f"pdfplumber not available or failed: {str(e)}")
+        
+        # Check character encoding
+        update.message.reply_text("Analyzing character encoding...")
+        
+        # Method 1: Simple text extraction for a larger sample
+        import fitz
+        doc = fitz.open(temp_path)
+        text = ""
+        for page_num in range(min(2, len(doc))):  # First two pages
+            page = doc.load_page(page_num)
+            text += page.get_text("text")
+        doc.close()
+        
+        # Check for common Hindi characters
+        hindi_chars = "अआइईउऊएऐओऔकखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह"
+        found_chars = []
+        missing_chars = []
+        
+        for char in hindi_chars:
+            if char in text:
+                found_chars.append(char)
+            else:
+                missing_chars.append(char)
+        
+        update.message.reply_text(f"Found Hindi chars: {''.join(found_chars[:20])}...")
+        update.message.reply_text(f"Missing Hindi chars: {''.join(missing_chars[:20])}...")
+        
+        # Analyze problematic characters
+        problem_chars = []
+        for char in text[:200]:
+            if ord(char) > 127:  # Non-ASCII
+                try:
+                    char.encode('utf-8').decode('utf-8')
+                except:
+                    problem_chars.append(f"{char} (U+{ord(char):04X})")
+        
+        if problem_chars:
+            update.message.reply_text(f"Problematic characters: {', '.join(problem_chars[:10])}...")
+        else:
+            update.message.reply_text("No encoding issues detected in the sample.")
+        
+        # Summary
+        update.message.reply_text("Diagnostic complete. Please share these results to help diagnose the Hindi text issue.")
+        
+    except Exception as e:
+        update.message.reply_text(f"Diagnostic error: {str(e)}")
+    
+    finally:
+        # Clean up
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
         
         
                     
