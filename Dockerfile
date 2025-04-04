@@ -2,17 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install essential packages including Hindi fonts
+# Install essential packages including Hindi fonts and pdfplumber dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     fonts-noto-cjk \
     fonts-noto \
-    fonts-freefont-ttf \
     fonts-indic \
     fonts-lohit-deva \
-    fonts-nakula \
     fonts-gargi \
-    fonts-sarai \
+    build-essential \
+    libpoppler-cpp-dev \
+    pkg-config \
+    python3-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
