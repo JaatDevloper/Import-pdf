@@ -20,7 +20,7 @@ ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
 
 # Install Python dependencies
-RUN pip install --no-cache-dir python-telegram-bot==13.15 Flask==2.3.3 PyPDF2==3.0.1 PyMuPDF==1.22.5
+RUN pip install --no-cache-dir python-telegram-bot==13.15 Flask==2.3.3 PyPDF2==3.0.1 PyMuPDF==1.22.5 reportlab==4.0.4 psycopg2-binary==2.9.7 python-dotenv==1.0.0
 
 # Copy the application code
 COPY . .
