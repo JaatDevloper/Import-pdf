@@ -11,11 +11,10 @@ from telegram import ParseMode
 
 # Import handlers
 from handlers.admin_handlers import (
-    start, list_quizzes, create_quiz, import_questions_from_pdf,
+    start_admin, list_quizzes, create_quiz, import_questions_from_pdf,
     handle_quiz_details, handle_quiz_question, handle_quiz_options,
     handle_quiz_correct, handle_quiz_continue, handle_quiz_create_confirm,
-    handle_quiz_cancel, handle_pdf_callback, delete_quiz,
-    diagnose_pdf, handle_diagnostic_pdf  # Make sure these are added to admin_handlers.py
+    handle_quiz_cancel, handle_pdf_callback, delete_quiz
 )
 from handlers.quiz_handlers import (
     take_quiz, handle_quiz_choice, handle_quiz_answer,
@@ -31,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 def setup_handlers(dispatcher):
     # Admin handlers
-    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("start", start_admin))
     dispatcher.add_handler(CommandHandler("list", list_quizzes))
     dispatcher.add_handler(CommandHandler("create", create_quiz))
     dispatcher.add_handler(CommandHandler("import", import_questions_from_pdf))
@@ -64,10 +63,6 @@ def setup_handlers(dispatcher):
         persistent=True
     )
     dispatcher.add_handler(create_quiz_handler)
-    
-    # Diagnostic handlers
-    dispatcher.add_handler(CommandHandler("diagnose_pdf", diagnose_pdf))
-    dispatcher.add_handler(MessageHandler(Filters.document & Filters.mime_type("application/pdf") & ~Filters.command, handle_diagnostic_pdf))
 
 def run_healthcheck():
     app = Flask(__name__)
