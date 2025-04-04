@@ -2,14 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install essential packages including Hindi fonts and pdfplumber dependencies
+# Install essential packages with comprehensive Devanagari font support
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    # Devanagari fonts for Hindi
+    fonts-lohit-deva \
+    fonts-nakula \
+    fonts-gargi \
+    fonts-sarai \
+    fonts-samyak-deva \
+    fonts-navilu \
     fonts-noto-cjk \
     fonts-noto \
     fonts-indic \
-    fonts-lohit-deva \
-    fonts-gargi \
+    # Build dependencies for pdfplumber
     build-essential \
     libpoppler-cpp-dev \
     pkg-config \
